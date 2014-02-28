@@ -5,32 +5,29 @@ using System.Collections;
 public class Raymarching : MonoBehaviour
 {
 	// Fields
-	public Vector3 LL;
-	public Vector3 LR;
-    public Vector3 corner;
-	public Camera mainCamera;
-	public static Material rayMat;
-	public Vector2 size;
+	private Vector3 LL;
+    private Vector3 LR;
+    private Vector3 corner;
+    private Camera mainCamera;
+	private Material rayMat;
+    private Vector2 size;
 	public float stepSize;
-	public Vector3 UL;
-	public static RenderTexture volume;
-	
+    public int stepCount;
+    private Vector3 UL;
+    public Vector4 intensityMask;
+    public Shader raymarchingShader;
+
 	// Methods
 	private void Start()
 	{
         GetComponent<MeshRenderer>().enabled = true;
-		rayMat = base.gameObject.renderer.material;
-		
-		
+		rayMat = new Material(raymarchingShader);
+	    renderer.material = rayMat;
+
+
 	}
 
-    void OnDrawGizmos()
-    {
-        Gizmos.DrawWireCube(transform.position, transform.localScale);
-    }
-
-
-    
+   
 	void Update()
 	{
         if (Camera.current != null)
@@ -50,7 +47,10 @@ public class Raymarching : MonoBehaviour
             rayMat.SetVector("cameraWorldPosition", Camera.current.transform.position);
             rayMat.SetVector("cameraUp", new Vector4(up.x, up.y, up.z));
             rayMat.SetVector("cameraRight", new Vector4(right.x, right.y, right.z));
+            rayMat.SetInt("stepCount", stepCount);
             rayMat.SetFloat("StepSize", this.stepSize);
+            rayMat.SetVector("intensityMask", intensityMask);
+            
             rayMat.SetFloat("worldSize", transform.localScale.x);
 
             corner = Camera.current.ViewportToWorldPoint(new Vector3(0f, 0f, Camera.current.nearClipPlane));

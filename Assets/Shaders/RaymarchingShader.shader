@@ -42,6 +42,8 @@
 				float worldSize;
 				float3 simulationTextureSize;
 				float4 cameraWorldPosition;
+				float4 intensityMask;
+				int stepCount;
 
 				sampler3D Current;
 				sampler2D _CameraDepthTexture;
@@ -66,17 +68,16 @@
 				    float3 Step = dir * StepSize; 
 					
 					
-				    for(int i = 0; i < 100; i++)
+				    for(int i = 0; i < stepCount; i++)
 				    {
 				        
 						
 						
 				        value = abs(tex3Dlod(Current, float4(pos.xyz/128,0) ).rgb);
+						
 					
-						src = float4(value,length(value) ) * 10;
-					
-						//src.a *= .1f; //reduce the alpha to have a more transparent result 
-				         
+						src = float4(value,length(value) ) * intensityMask;
+					     
 				        //Front to back blending
 				        // dst.rgb = dst.rgb + (1 - dst.a) * src.a * src.rgb
 				        // dst.a   = dst.a   + (1 - dst.a) * src.a     
@@ -94,7 +95,7 @@
 						if(length(pos - front) > depth)
 							break;
 				     
-				        //break if the position is greater than <1, 1, 1>
+				   
 				    
 				    }
 					
