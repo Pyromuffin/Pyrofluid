@@ -1,0 +1,261 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Advect
+#pragma kernel Jacobi
+#pragma kernel Project
+#pragma kernel Divergence
+#pragma kernel JacobiPressure
+#pragma kernel JacobiVector
+
+SamplerState LinearClampSampler;
+
+RWTexture3D<float3> nextVelocity;
+RWTexture3D<float> nextPressure;
+RWTexture3D<float> divergenceTexture;
+Texture3D<float3> velocity;
+Texture3D<float> pressure;
+Texture3D<float> media;
+Texture3D<float2> density;
+RWTexture3D<float2> nextDensity;
+const uint modBro;
+const float ambientTemperature;
+const float buoyancyConstant;
+
+const float4 textureSize;
+const float distanceStep, timeStep;
+const float4 sourceVelocity;
+const float4 sourceDensity;
+
+bool isObstacle(uint3 pos)
+{
+	return any(pos == 1) || any(pos == 127 || any(media[pos] != 0));
+
+}
+
+[numthreads(8, 8, 8)]
+void Divergence(uint3 id : SV_DispatchThreadID)
+{
+	// Get velocity values from neighboring cells.
+	float fieldL = velocity[id - int3(1, 0, 0)].x;
+	float fieldR = velocity[id + int3(1, 0, 0)].x;
+	float fieldB = velocity[id - int3(0, 1, 0)].y;
+	float fieldT = velocity[id + int3(0, 1, 0)].y;
+	float fieldD = velocity[id - int3(0, 0, 1)].z;
+	float fieldU = velocity[id + int3(0, 0, 1)].z;
+
+	
+	if (isObstacle(id - int3(1, 0, 0))) fieldL = 0;
+	if (isObstacle(id + int3(1, 0, 0))) fieldR = 0;
+	if (isObstacle(id - int3(0, 1, 0))) fieldB = 0;
+	if (isObstacle(id + int3(0, 1, 0))) fieldT = 0;
+	if (isObstacle(id - int3(0, 0, 1))) fieldD = 0;
+	if (isObstacle(id + int3(0, 0, 1))) fieldU = 0;
+	
+	// Compute the velocity's divergence using central differences.
+	float divergence = 0.5 * ((fieldR - fieldL) +
+	(fieldT - fieldB) +
+	(fieldU - fieldD));
+
+	divergenceTexture[id] = -divergence;
+}
+
+
+[numthreads(8, 8, 8)]
+void Advect(uint3 id : SV_DispatchThreadID)
+{
+	//advect
+	if (isObstacle(id))
+	{
+		nextVelocity[id] = 0;
+		nextDensity[id] = 0;
+		return;
+	}
+
+
+	float3 sam = id - timeStep * velocity[id];
+		sam = (sam + 0.5) / 128;
+
+	float3 v = velocity.SampleLevel(LinearClampSampler, sam, 0);
+	float2 d = density.SampleLevel(LinearClampSampler, sam, 0);
+
+	nextVelocity[id] = v + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature) ) * timeStep;
+	nextDensity[id] = d;
+
+	//add sources
+	if (all(id == 64) )
+	{
+		nextVelocity[id] = v + (sourceVelocity.xyz * timeStep) + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature)) * timeStep;
+		nextDensity[id] =  d + (sourceDensity.xy * timeStep);
+
+	}
+	else if ( all(id == uint3(64, 64, 63)) || all(id == uint3(64, 64, 63)) || all(id == uint3(64, 63, 64)) || all(id == uint3(63, 64, 64)) || all(id == uint3(64, 64, 65))
+		|| all(id == uint3(64, 65, 64)) || all(id == uint3(65, 64, 64)))
+	{
+		nextVelocity[id] = v + ((sourceVelocity.xyz * timeStep) + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature)) * timeStep)/2;
+		nextDensity[id] = d + (sourceDensity.xy * timeStep)/2;
+	}
+}
+
+
+Texture3D<float> x;
+Texture3D<float> b;
+const int jacobiIterations;
+RWTexture3D<float> nextX;
+const float alpha, rBeta;
+
+/*
+groupshared float sharedValue[8][8][8];
+[numthreads(8, 8, 8)]
+void JacobiGeneric(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupThreadID)
+{
+	float oldValue = b[id];
+	sharedValue[gid.x][gid.y][gid.z] = x[id];
+	GroupMemoryBarrierWithGroupSync();
+
+	for(int i =0; i < jacobiIterations; i++)
+	{
+
+		float L = sharedValue[gid.x-1][gid.y][gid.z];
+		float R = sharedValue[gid.x+1][gid.y][gid.z];
+		float B = sharedValue[gid.x][gid.y-1][gid.z];
+		float T = sharedValue[gid.x][gid.y+1][gid.z];
+		float D = sharedValue[gid.x][gid.y][gid.z-1];
+		float U = sharedValue[gid.x][gid.y][gid.z+1];
+	
+		GroupMemoryBarrierWithGroupSync();
+	
+		sharedValue[gid.x][gid.y][gid.z] = (alpha * (L + R + B + T + D + U) + oldValue) * rBeta;
+
+		GroupMemoryBarrierWithGroupSync();
+	}
+
+	x[id] = sharedValue[gid.x][gid.y][gid.z];
+	
+}
+*/
+
+
+
+[numthreads(8, 8, 8)]
+void JacobiPressure(uint3 id : SV_DispatchThreadID)
+{
+	 //float alpha = (diffusionConstant * timeStep) / (Mathf.Pow(distanceStep, 3));
+     //float beta = 1 + (6 * alpha);
+	
+	float C = x[id];
+
+
+	float L = x[id - int3(1, 0, 0)];
+	float R = x[id + int3(1, 0, 0)];
+	float B = x[id - int3(0, 1, 0)];
+	float T = x[id + int3(0, 1, 0)];
+	float D = x[id - int3(0, 0, 1)];
+	float U = x[id + int3(0, 0, 1)];
+
+	
+	if (isObstacle(id - int3(1, 0, 0))) L = C;
+	if (isObstacle(id + int3(1, 0, 0))) R = C;
+	if (isObstacle(id - int3(0, 1, 0))) B = C;
+	if (isObstacle(id + int3(0, 1, 0))) T = C;
+	if (isObstacle(id - int3(0, 0, 1))) D = C;
+	if (isObstacle(id + int3(0, 0, 1))) U = C;
+	
+
+	nextX[id] = ( (L + R + B + T + D + U)  + b[id]) / 6;
+}
+
+
+[numthreads(8, 8, 8)]
+void Jacobi(uint3 id : SV_DispatchThreadID)
+{
+	 //float alpha = (diffusionConstant * timeStep) / (Mathf.Pow(distanceStep, 3));
+     //float beta = 1 + (6 * alpha);
+	if (any(id == 1) || any(id == 127) || any(media[id] != 0))
+	{
+		return;	
+	}
+	
+	float L = x[id - int3(1, 0, 0)];
+	float R = x[id + int3(1, 0, 0)];
+	float B = x[id - int3(0, 1, 0)];
+	float T = x[id + int3(0, 1, 0)];
+	float D = x[id - int3(0, 0, 1)];
+	float U = x[id + int3(0, 0, 1)];
+	
+	
+	nextX[id] = ( alpha* (L + R + B + T + D + U)  + x[id]) * rBeta;
+}
+
+texture3D<float3> x3D;
+RWTexture3D<float3> nextX3D;
+[numthreads(8, 8, 8)]
+void JacobiVector(uint3 id : SV_DispatchThreadID)
+{
+	 //float alpha = (diffusionConstant * timeStep) / (Mathf.Pow(distanceStep, 3));
+     //float beta = 1 + (6 * alpha);
+	
+	float3 C = x3D[id];
+	float3 L = x3D[id - int3(1, 0, 0)];
+	float3 R = x3D[id + int3(1, 0, 0)];
+	float3 B = x3D[id - int3(0, 1, 0)];
+	float3 T = x3D[id + int3(0, 1, 0)];
+	float3 D = x3D[id - int3(0, 0, 1)];
+	float3 U = x3D[id + int3(0, 0, 1)];
+
+	if (isObstacle(id - int3(1, 0, 0))) L = C;
+	if (isObstacle(id + int3(1, 0, 0))) R = C;
+	if (isObstacle(id - int3(0, 1, 0))) B = C;
+	if (isObstacle(id + int3(0, 1, 0))) T = C;
+	if (isObstacle(id - int3(0, 0, 1))) D = C;
+	if (isObstacle(id + int3(0, 0, 1))) U = C;
+	
+	
+	nextX3D[id] = (  alpha* (L + R + B + T + D + U)  + x3D[id]) * rBeta;
+}
+
+
+[numthreads(8, 8, 8)]
+void Project(uint3 id : SV_DispatchThreadID)
+{
+	if (isObstacle(id))
+	{
+		nextVelocity[id] = 0;
+		return;
+	}
+
+	float C = pressure[id];
+	float L = pressure[id - int3(1, 0, 0)];
+	float R = pressure[id + int3(1, 0, 0)];
+	float B = pressure[id - int3(0, 1, 0)];
+	float T = pressure[id + int3(0, 1, 0)];
+	float D = pressure[id - int3(0, 0, 1)];
+	float U = pressure[id + int3(0, 0, 1)];
+
+	float3 vMask = float3(1, 1, 1);
+		// If an adjacent cell is solid, ignore its pressure  
+		// and use its velocity.  
+
+	if (isObstacle(id - int3(1, 0, 0))) {
+		L = C; vMask.x = 0;
+	}
+	if (isObstacle(id + int3(1, 1, 0))) {
+		R = C; vMask.x = 0;
+	}
+	if (isObstacle(id - int3(0, 1, 0))) {
+		B = C; vMask.y = 0;
+	}
+	if (isObstacle(id + int3(0, 0, 0))) {
+		T = C; vMask.y = 0;
+	}
+	if (isObstacle(id - int3(0, 0, 1))) {
+		D = C;  vMask.z = 0;
+	}
+	if (isObstacle(id + int3(0, 0, 1))) {
+		U = C; vMask.z = 0;
+	}
+
+
+	//uses advected velocity;
+	float3 gradient = 0.5*float3(R - L, T - B, U - D);
+	
+	nextVelocity[id] = (velocity[id] - gradient) * vMask;
+}

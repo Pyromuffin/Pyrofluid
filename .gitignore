@@ -1,0 +1,21 @@
+##################
+# Unity ignores:
+#
+# !!! WARNING !!!
+#
+# … you MUST convert Unity to using Metafiles *before* you start using this .gitignore file,
+# or you WILL lose data!
+#
+# All platforms
+Library
+Temp
+*.booproj
+*.csproj
+*.pidb
+*.unityproj
+*.sln
+*.userprefs
+*.DotSettings
+desktop.ini
+desktop.ini.meta
+*UnityVS*
