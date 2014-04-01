@@ -71,13 +71,71 @@ void Advect(uint3 id : SV_DispatchThreadID)
 	}
 
 
+	// project backwards to find a location from which to pull vel, dens
 	float3 sam = id - timeStep * velocity[id];
-		sam = (sam + 0.5) / 128;
+	sam = (sam + 0.5) / 128;
 
+	// sample at those positions
 	float3 v = velocity.SampleLevel(LinearClampSampler, sam, 0);
+	// density is (density, temperature)
 	float2 d = density.SampleLevel(LinearClampSampler, sam, 0);
 
-	nextVelocity[id] = v + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature) ) * timeStep;
+	nextVelocity[id] = v
+			 // vas ist dis? surely not buoyancy
+			 + (d.x * float3(0, -9.81, 0) * timeStep)
+			 // buoyancy term
+		  	 + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature) ) * timeStep;
+	nextDensity[id] = d;
+
+	//add sources
+	if (all(id == 64) )
+	{
+		nextVelocity[id] = v + (sourceVelocity.xyz * timeStep) + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature)) * timeStep;
+		nextDensity[id] =  d + (sourceDensity.xy * timeStep);
+
+	}
+	else if ( all(id == uint3(64, 64, 63)) || all(id == uint3(64, 64, 63)) || all(id == uint3(64, 63, 64)) || all(id == uint3(63, 64, 64)) || all(id == uint3(64, 64, 65))
+		|| all(id == uint3(64, 65, 64)) || all(id == uint3(65, 64, 64)))
+	{
+		nextVelocity[id] = v + ((sourceVelocity.xyz * timeStep) + (d.x * float3(0, -9.81, 0) * timeStep) + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature)) * timeStep)/2;
+		nextDensity[id] = d + (sourceDensity.xy * timeStep)/2;
+	}
+}
+
+
+[numthreads(8, 8, 8)]
+void Advect2ndOrder(uint3 id : SV_DispatchThreadID)
+{
+	//advect
+	if (isObstacle(id))
+	{
+		nextVelocity[id] = 0;
+		nextDensity[id] = 0;
+		return;
+	}
+
+
+	// project backwards to find a location from which to pull vel, dens
+	float3 sam = id - timeStep * velocity[id];
+	sam = (sam + 0.5) / 128;
+
+	// sample velocity only
+	float3 v = velocity.SampleLevel(LinearClampSampler, sam, 0);
+
+	// project backwards using the average of both velocities
+	sam = id - 0.5 * timeStep * (velocity[id] + v);
+	sam = (sam + 0.5) / 128;
+
+	// now sample both using this new location
+	v = velocity.SampleLevel(LinearClampSampler, sam, 0);
+	// density is (density, temperature)
+	float2 d = density.SampleLevel(LinearClampSampler, sam, 0);
+
+	nextVelocity[id] = v
+			 // vas ist dis? surely not buoyancy
+			 + (d.x * float3(0, -9.81, 0) * timeStep)
+			 // buoyancy term
+		  	 + float3(0, 1, 0) * (buoyancyConstant * (d.y - ambientTemperature) ) * timeStep;
 	nextDensity[id] = d;
 
 	//add sources
